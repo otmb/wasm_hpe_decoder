@@ -1,0 +1,2 @@
+main: main.cpp
+	${HOME}/src/emsdk/upstream/emscripten/em++ -g main.cpp -o main.js -L${HOME}/src/opencv-4.7.0/build_wasm/lib -lopencv_core -lopencv_imgproc src/*.cpp -Iinclude `pkg-config --cflags opencv4` 

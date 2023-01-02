@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <title>wasmtest</title>
+  </head>
+  <body>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <script type='text/javascript'>
+      
+      async function loadImage(src) {
+        const imgBlob = await fetch(src).then((resp) => resp.blob());
+        const img = await createImageBitmap(imgBlob);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        return ctx.getImageData(0, 0, img.width, img.height);
+      }
+
+      const init = async () => {
+        
+        const model = await tf.loadGraphModel('./simplebaseline_tfjs_fp16/model.json');
+
+        const updateCanvas = async ()  => {
+          
+          const image = await loadImage('./image.jpg');
+          const imagePointer = Module._malloc(image.data.length);
+          Module.HEAPU8.set(image.data, imagePointer);
+
+          let keypointBuffer = [];
+          // const box = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875];
+          const boxes = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875, 
+                        45.96035385131836, 284.569580078125, 156.86953735351562, 389.1776123046875,
+                        181.7513885498047, 290.7883605957031, 252.79049682617188, 384.8514404296875, 
+                        312.6956481933594, 273.7389831542969, 411.21160888671875, 392.89984130859375, 
+                        473.4137878417969, 314.5270080566406, 573.98828125, 395.65576171875]
+
+          const boxesPointer = Module._malloc(boxes.length * 4);
+          Module.HEAPF32.set(new Float32Array(boxes), boxesPointer / 4);
+
+          const modelWidth = 192;
+          const modelHeight = 256;
+          const keypointsNumber = 17;
+          const modelInputSize = modelWidth * modelHeight * 3;
+          const peopleNum = boxes.length / 4;
+          const centerPointer = createFloatHeap(2);
+          const scalePointer = createFloatHeap(2);
+
+          for (let i = 0; i < peopleNum; i++) {
+            const box = [boxes[i*4], boxes[i*4+1], boxes[i*4+2], boxes[i*4+3]];
+            const boxPointer = Module._malloc(4 * 4);
+            Module.HEAPF32.set(new Float32Array(box), boxPointer / 4);
+
+            const inputPointer = _preRun(imagePointer, image.width, image.height, centerPointer, scalePointer, boxPointer);
+            const inputData = new Float32Array(Module.HEAP32.buffer, inputPointer, modelInputSize);
+            
+            const x = tf.tensor1d(inputData).reshape([1, 3, 256, 192]);
+            const y = model.predict(x);
+            const arr = await y.data();
+            const heatmapPointer = Module._malloc(arr.length * 4);
+            Module.HEAPF32.set(arr, heatmapPointer / 4);
+
+            const keypointPointer = _postRun(heatmapPointer, centerPointer, scalePointer);
+            const keypointData = new Float32Array(Module.HEAP32.buffer, keypointPointer, keypointsNumber * 3);
+            keypointBuffer = keypointBuffer.concat(Array.from(keypointData));
+
+            _free(heatmapPointer);
+            
+          }
+
+          // Render
+          const keypointBufferPointer = Module._malloc(keypointBuffer.length * 4);
+          Module.HEAPF32.set(new Float32Array(keypointBuffer), keypointBufferPointer / 4);
+          _poseRender(imagePointer, image.width, image.height, boxesPointer, keypointBufferPointer, peopleNum);
+
+          _free(centerPointer);
+          _free(scalePointer);
+          _free(imagePointer);
+          _free(boxesPointer);
+          _free(keypointBufferPointer);
+          // console.log(Module.HEAPF32.subarray(center / 4, center / 4 + 2));
+        }
+        updateCanvas();
+      }
+
+      window.Module = {
+        canvas: document.getElementById("canvas"),
+        onRuntimeInitialized: async () => {
+          await tf.setBackend('webgl').then(init)
+        },
+        print: function(text) { console.log(text); },
+        // print: function(text){},
+        printErr: function(text) { console.log(text); }
+      };
+
+      function createFloatHeap(size){
+        const offset = Module._malloc(size * 4);
+        Module.HEAPF32.set(new Float32Array(size), offset / 4);
+        return offset;
+      }
+      
+    </script>
+    <script type="text/javascript" src="main.js"></script>
+
+  </body>
+</html>

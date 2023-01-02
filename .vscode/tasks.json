@@ -1,0 +1,46 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "run all tasks",
+            "type": "shell",
+            "command": "echo complete",
+            "dependsOn": [
+                "emscripten make",
+                // "emscripten run"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "emscripten run",
+            "type": "shell",
+            "command": "open http://localhost:8000"
+        },
+        {
+            "label": "emscripten make",
+            "type": "shell",
+            "command": "${HOME}/src/emsdk/upstream/emscripten/em++",
+            "args": [
+                "-g",
+                "${workspaceFolder}/main.cpp",
+                "-o",
+                "main.js",
+                "-L${HOME}/src/opencv-4.7.0/build_wasm/lib",
+                "-lopencv_core",
+                "-lopencv_imgproc",
+                "${workspaceFolder}/src/*.cpp",
+                "-I${workspaceFolder}/include",
+                "`pkg-config",
+                "--cflags",
+                "opencv4`"
+            ],
+        }
+    ]
+}
