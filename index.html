@@ -5,9 +5,15 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
     <title>wasmtest</title>
   </head>
   <body>
+    <div class="spinner-border text-primary" role="status" id="loading">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <br />
     <canvas id="canvas" width="640" height="480"></canvas>
     <script type='text/javascript'>
       
@@ -22,20 +28,16 @@
         return ctx.getImageData(0, 0, img.width, img.height);
       }
 
-      
-
       const init = async () => {
         
         const poseModel = await tf.loadGraphModel('./simplebaseline_tfjs_fp16/model.json');
         const detModel = await tf.loadGraphModel('./yolov7-tiny_tfjs_fp16/model.json');
-
-        const updateCanvas = async ()  => {
-          
-          const image = await loadImage('./image.jpg');
-          const imagePointer = Module._malloc(image.data.length);
-          Module.HEAPU8.set(image.data, imagePointer);
-
+        document.getElementById("loading").style.display ="none";
+        
+        const updateCanvas = async (image)  => {
           let boxes = await detection(image);
+          const centerPointer = createFloatHeap(2);
+          const scalePointer = createFloatHeap(2);
 
           // const box = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875];
           // const boxes = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875, 
@@ -52,8 +54,9 @@
           const keypointsNumber = 17;
           const modelInputSize = modelWidth * modelHeight * 3;
           const peopleNum = boxes.length / 4;
-          const centerPointer = createFloatHeap(2);
-          const scalePointer = createFloatHeap(2);
+          
+          const imagePointer = Module._malloc(image.data.length);
+          Module.HEAPU8.set(image.data, imagePointer);
 
           for (let i = 0; i < peopleNum; i++) {
             const box = [boxes[i*4], boxes[i*4+1], boxes[i*4+2], boxes[i*4+3]];
@@ -61,20 +64,21 @@
             Module.HEAPF32.set(new Float32Array(box), boxPointer / 4);
 
             const inputPointer = _preRun(imagePointer, image.width, image.height, centerPointer, scalePointer, boxPointer);
-            const inputData = new Float32Array(Module.HEAP32.buffer, inputPointer, modelInputSize);
+            const inputData = new Float32Array(Module.HEAPF32.buffer, inputPointer, modelInputSize);
             
-            const x = tf.tensor1d(inputData).reshape([1, 3, 256, 192]);
-            const y = poseModel.predict(x);
-            const arr = await y.data();
+            const result = tf.tidy(() => {
+              const x = tf.tensor1d(inputData).reshape([1, 3, modelHeight, modelWidth]);
+              return poseModel.predict(x);
+            });
+            const arr = await result.data();
             const heatmapPointer = Module._malloc(arr.length * 4);
             Module.HEAPF32.set(arr, heatmapPointer / 4);
 
             const keypointPointer = _postRun(heatmapPointer, centerPointer, scalePointer);
-            const keypointData = new Float32Array(Module.HEAP32.buffer, keypointPointer, keypointsNumber * 3);
+            const keypointData = new Float32Array(Module.HEAPF32.buffer, keypointPointer, keypointsNumber * 3);
             keypointBuffer = keypointBuffer.concat(Array.from(keypointData));
 
             _free(heatmapPointer);
-            
           }
 
           // Render
@@ -87,28 +91,26 @@
           _free(imagePointer);
           _free(boxesPointer);
           _free(keypointBufferPointer);
-          // console.log(Module.HEAPF32.subarray(center / 4, center / 4 + 2));
         }
-        updateCanvas();
-
+        
         async function detection(image){
-
           let boxes = [];
           const {resized, ratio, padding} = padAndResizeTo(image, 640, 640);
           const x = resized.div(255).transpose([2,0,1]).reshape([1, 3, 640, 640]);
           const feedDict = {"images": x };
           const preds = await detModel.executeAsync(feedDict, "output");
           const data = await preds.data();
-
+          tf.dispose(x);
+          tf.dispose(preds);
           for (let i=0; i<data.length / 7; i++){
             const [ batch_id,x0,y0,x1,y1,cls_id,score ] = data.slice(i*7, i*7+7);
             
             if (cls_id == 0){
               let box = [
-                x0 - padding.left / ratio,
-                y0 - padding.bottom / ratio,
-                x1 - padding.left / ratio,
-                y1 - padding.bottom / ratio,
+                (x0 - padding.left) / ratio,
+                (y0 - padding.bottom) / ratio,
+                (x1 - padding.left) / ratio,
+                (y1 - padding.bottom) / ratio,
               ];
               boxes = boxes.concat(Array.from(box));
             }
@@ -122,12 +124,15 @@
          
           return boxes;
         }
+
+        const image = await loadImage('./image.jpg');
+        updateCanvas(image);
       }
 
       window.Module = {
         canvas: document.getElementById("canvas"),
         onRuntimeInitialized: async () => {
-          await tf.setBackend('webgl').then(init)
+          await tf.setBackend('webgl').then(init);
         },
         print: function(text) { console.log(text); },
         // print: function(text){},
@@ -156,7 +161,6 @@
           padB = 0;
           padL = Math.round(0.5 * (targetAspect * height - width));
           padR = Math.round(0.5 * (targetAspect * height - width));
-          ratio = targetAspect;
         } else {
           // pads the height
           padT = Math.round(0.5 * ((1.0 / targetAspect) * width - height));
@@ -167,7 +171,6 @@
         const ratio = Math.min(targetH / height, targetW / width);
 
         const resized = tf.tidy(() => {
-          // let imageTensor = tf.cast(imageToTensor(input), 'float32');
           let imageTensor = imageToTensor(input);
           imageTensor = tf.pad3d(imageTensor, [[padT, padB], [padL, padR], [0, 0]]);
 
