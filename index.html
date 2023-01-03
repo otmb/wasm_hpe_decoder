@@ -22,9 +22,12 @@
         return ctx.getImageData(0, 0, img.width, img.height);
       }
 
+      
+
       const init = async () => {
         
-        const model = await tf.loadGraphModel('./simplebaseline_tfjs_fp16/model.json');
+        const poseModel = await tf.loadGraphModel('./simplebaseline_tfjs_fp16/model.json');
+        const detModel = await tf.loadGraphModel('./yolov7-tiny_tfjs_fp16/model.json');
 
         const updateCanvas = async ()  => {
           
@@ -32,14 +35,15 @@
           const imagePointer = Module._malloc(image.data.length);
           Module.HEAPU8.set(image.data, imagePointer);
 
-          let keypointBuffer = [];
-          // const box = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875];
-          const boxes = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875, 
-                        45.96035385131836, 284.569580078125, 156.86953735351562, 389.1776123046875,
-                        181.7513885498047, 290.7883605957031, 252.79049682617188, 384.8514404296875, 
-                        312.6956481933594, 273.7389831542969, 411.21160888671875, 392.89984130859375, 
-                        473.4137878417969, 314.5270080566406, 573.98828125, 395.65576171875]
+          let boxes = await detection(image);
 
+          // const box = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875];
+          // const boxes = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875, 
+          //               45.96035385131836, 284.569580078125, 156.86953735351562, 389.1776123046875,
+          //               181.7513885498047, 290.7883605957031, 252.79049682617188, 384.8514404296875, 
+          //               312.6956481933594, 273.7389831542969, 411.21160888671875, 392.89984130859375, 
+          //               473.4137878417969, 314.5270080566406, 573.98828125, 395.65576171875]
+          let keypointBuffer = [];
           const boxesPointer = Module._malloc(boxes.length * 4);
           Module.HEAPF32.set(new Float32Array(boxes), boxesPointer / 4);
 
@@ -60,7 +64,7 @@
             const inputData = new Float32Array(Module.HEAP32.buffer, inputPointer, modelInputSize);
             
             const x = tf.tensor1d(inputData).reshape([1, 3, 256, 192]);
-            const y = model.predict(x);
+            const y = poseModel.predict(x);
             const arr = await y.data();
             const heatmapPointer = Module._malloc(arr.length * 4);
             Module.HEAPF32.set(arr, heatmapPointer / 4);
@@ -86,6 +90,38 @@
           // console.log(Module.HEAPF32.subarray(center / 4, center / 4 + 2));
         }
         updateCanvas();
+
+        async function detection(image){
+
+          let boxes = [];
+          const {resized, ratio, padding} = padAndResizeTo(image, 640, 640);
+          const x = resized.div(255).transpose([2,0,1]).reshape([1, 3, 640, 640]);
+          const feedDict = {"images": x };
+          const preds = await detModel.executeAsync(feedDict, "output");
+          const data = await preds.data();
+
+          for (let i=0; i<data.length / 7; i++){
+            const [ batch_id,x0,y0,x1,y1,cls_id,score ] = data.slice(i*7, i*7+7);
+            
+            if (cls_id == 0){
+              let box = [
+                x0 - padding.left / ratio,
+                y0 - padding.bottom / ratio,
+                x1 - padding.left / ratio,
+                y1 - padding.bottom / ratio,
+              ];
+              boxes = boxes.concat(Array.from(box));
+            }
+          }
+          // const box = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875];
+          // const boxes = [269.44891357421875, 124.16687774658203, 514.134765625, 386.0028076171875, 
+          //               45.96035385131836, 284.569580078125, 156.86953735351562, 389.1776123046875,
+          //               181.7513885498047, 290.7883605957031, 252.79049682617188, 384.8514404296875, 
+          //               312.6956481933594, 273.7389831542969, 411.21160888671875, 392.89984130859375, 
+          //               473.4137878417969, 314.5270080566406, 573.98828125, 395.65576171875]
+         
+          return boxes;
+        }
       }
 
       window.Module = {
@@ -103,7 +139,48 @@
         Module.HEAPF32.set(new Float32Array(size), offset / 4);
         return offset;
       }
-      
+
+      function imageToTensor(img) {
+  			return img instanceof tf.Tensor ? img : tf.browser.fromPixels(img);
+			}
+
+      function padAndResizeTo(input, targetH, targetW) {
+
+        const [height, width] = getInputTensorDimensions(input);
+        const targetAspect = targetW / targetH;
+        const aspect = width / height;
+        let [padT, padB, padL, padR] = [0, 0, 0, 0];
+        if (aspect < targetAspect) {
+          // pads the width
+          padT = 0;
+          padB = 0;
+          padL = Math.round(0.5 * (targetAspect * height - width));
+          padR = Math.round(0.5 * (targetAspect * height - width));
+          ratio = targetAspect;
+        } else {
+          // pads the height
+          padT = Math.round(0.5 * ((1.0 / targetAspect) * width - height));
+          padB = Math.round(0.5 * ((1.0 / targetAspect) * width - height));
+          padL = 0;
+          padR = 0;
+        }
+        const ratio = Math.min(targetH / height, targetW / width);
+
+        const resized = tf.tidy(() => {
+          // let imageTensor = tf.cast(imageToTensor(input), 'float32');
+          let imageTensor = imageToTensor(input);
+          imageTensor = tf.pad3d(imageTensor, [[padT, padB], [padL, padR], [0, 0]]);
+
+          return tf.image.resizeBilinear(imageTensor, [targetH, targetW]);
+        });
+
+        return {resized, ratio, padding: {top: padT, left: padL, right: padR, bottom: padB}};
+      }
+
+      function getInputTensorDimensions(input){
+        return input instanceof tf.Tensor ? 
+            [input.shape[0], input.shape[1]] : [input.height, input.width];
+      }
     </script>
     <script type="text/javascript" src="main.js"></script>
 
