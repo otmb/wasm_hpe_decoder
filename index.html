@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
-    <title>wasmtest</title>
+    <title>wasm_hpe_decoder</title>
   </head>
   <body>
     <div class="spinner-border text-primary" role="status" id="loading">
@@ -17,6 +17,12 @@
     <br />
     <video id="video" style="display: none;"></video>
     <canvas id="canvas" width="640" height="480"></canvas>
+    <ul>
+      <li>Pose Estimation: SimpleBaseline resnet50 192x256(fp16)</li>
+      <li>Object Detection: Yolov7-tiny 600x600(fp16)</li>
+    </ul>
+    &nbsp;&nbsp; <a href="https://github.com/otmb/wasm_hpe_decoder">https://github.com/otmb/wasm_hpe_decoder</a> Created by <a href="https://twitter.com/mb_otsu">@mb_otsu</a>
+
     <script type='text/javascript'>
       const wait = async (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
