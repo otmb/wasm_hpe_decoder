@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+    <title>wasm_hpe_decoder</title>
+  </head>
+  <body>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <br clear = "all"/>
+    <div class="spinner-border text-primary" role="status" id="loading">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <ul>
+      <li>Object Detection: Yolov7-tiny 600x600(fp16)</li>
+    </ul>
+    &nbsp;&nbsp; <a href="https://github.com/otmb/wasm_hpe_decoder">https://github.com/otmb/wasm_hpe_decoder</a> Created by <a href="https://twitter.com/mb_otsu">@mb_otsu</a>
+
+    <script type='text/javascript'>
+
+      const names = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 
+         'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 
+         'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 
+         'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 
+         'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 
+         'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 
+         'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 
+         'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 
+         'hair drier', 'toothbrush'];
+
+      const canvas = document.getElementById("canvas");
+      canvas.width = 600;
+      canvas.height = 480;
+      const context = canvas.getContext("2d");
+
+      async function loadImage(src) {
+        const imgBlob = await fetch(src).then((resp) => resp.blob());
+        const img = await createImageBitmap(imgBlob);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        console.log(img.width, img.height);
+        return ctx.getImageData(0, 0, img.width, img.height);
+      }
+
+      const init = async () => {
+
+        await tf.setBackend('webgl').then();        
+        const detModel = await tf.loadGraphModel('./yolov7-tiny_tfjs_fp16/model.json');
+        document.getElementById("loading").style.display ="none";
+
+        const updateCanvas = async ()  => {
+          const image = await loadImage('./image.jpg');
+          context.putImageData(image, 0, 0);
+          let boxes = await detection(image);
+          console.log(boxes);
+        }
+
+        async function detection(image){
+          let boxes = [];
+          const {resized, ratio, padding} = padAndResizeTo(image, 640, 640);
+          const x = resized.div(255).transpose([2,0,1]).reshape([1, 3, 640, 640]);
+          const feedDict = {"images": x };
+          let preds;
+          try {
+            preds = await detModel.executeAsync(feedDict, "output");
+          } catch (e) {
+            let mean = await x.mean().data();
+            console.warn("Error: yolov7 too little input: " + mean[0]);
+            return;
+          }
+          const data = await preds.data();
+          tf.dispose(x);
+          tf.dispose(preds);
+          for (let i=0; i<data.length / 7; i++){
+            const [ batch_id,x0,y0,x1,y1,cls_id,score ] = data.slice(i*7, i*7+7);
+            let box = [
+              (x0 - padding.left) / ratio,
+              (y0 - padding.bottom) / ratio,
+              (x1 - padding.left) / ratio,
+              (y1 - padding.bottom) / ratio,
+            ];
+            context.strokeStyle = '#38f';
+            context.strokeRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
+            context.fillStyle = "#00ff00";
+            context.font = '14px serif';
+            context.fillText(names[cls_id] + " " + Math.round(score * 1000) / 1000, box[0], box[1] - 2);
+
+            boxes = boxes.concat(Array.from(box));
+          }
+          return boxes;
+        }
+        updateCanvas();
+      }
+
+      function imageToTensor(img) {
+  		  return img instanceof tf.Tensor ? img : tf.browser.fromPixels(img);
+	    }
+
+      function padAndResizeTo(input, targetH, targetW) {
+
+        const [height, width] = getInputTensorDimensions(input);
+        const targetAspect = targetW / targetH;
+        const aspect = width / height;
+        let [padT, padB, padL, padR] = [0, 0, 0, 0];
+        if (aspect < targetAspect) {
+          // pads the width
+          padT = 0;
+          padB = 0;
+          padL = Math.round(0.5 * (targetAspect * height - width));
+          padR = Math.round(0.5 * (targetAspect * height - width));
+        } else {
+          // pads the height
+          padT = Math.round(0.5 * ((1.0 / targetAspect) * width - height));
+          padB = Math.round(0.5 * ((1.0 / targetAspect) * width - height));
+          padL = 0;
+          padR = 0;
+        }
+        const ratio = Math.min(targetH / height, targetW / width);
+
+        const resized = tf.tidy(() => {
+          let imageTensor = imageToTensor(input);
+          imageTensor = tf.pad3d(imageTensor, [[padT, padB], [padL, padR], [0, 0]]);
+
+          return tf.image.resizeBilinear(imageTensor, [targetH, targetW]);
+        });
+
+        return {resized, ratio, padding: {top: padT, left: padL, right: padR, bottom: padB}};
+      }
+
+      function getInputTensorDimensions(input){
+        return input instanceof tf.Tensor ? 
+            [input.shape[0], input.shape[1]] : [input.height, input.width];
+      }
+
+      window.onload = init;
+    </script>
+  </body>
+</html>
