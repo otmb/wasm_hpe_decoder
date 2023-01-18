@@ -19,7 +19,7 @@
     <canvas id="canvas" width="640" height="480"></canvas>
     <ul>
       <li>Pose Estimation: SimpleBaseline resnet50 192x256(fp16)</li>
-      <li>Object Detection: Yolov7-tiny 600x600(fp16)</li>
+      <li>Object Detection: Yolov7-tiny 640x640(fp16)</li>
     </ul>
     &nbsp;&nbsp; <a href="https://github.com/otmb/wasm_hpe_decoder">https://github.com/otmb/wasm_hpe_decoder</a> Created by <a href="https://twitter.com/mb_otsu">@mb_otsu</a>
 
@@ -164,10 +164,10 @@
             
             if (cls_id == 0){
               let box = [
-                (x0 - padding.left) / ratio,
-                (y0 - padding.bottom) / ratio,
-                (x1 - padding.left) / ratio,
-                (y1 - padding.bottom) / ratio,
+                x0 * ratio - padding.left,
+                y0 * ratio - padding.bottom,
+                x1 * ratio - padding.left,
+                y1 * ratio - padding.bottom,
               ];
               boxes = boxes.concat(Array.from(box));
             }
@@ -223,7 +223,7 @@
           padL = 0;
           padR = 0;
         }
-        const ratio = Math.min(targetH / height, targetW / width);
+        const ratio = Math.max(height/ targetH, width / targetW);
 
         const resized = tf.tidy(() => {
           let imageTensor = imageToTensor(input);
