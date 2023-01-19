@@ -58,7 +58,7 @@ void renderHumanPose(const std::vector<HumanPose>& poses, cv::Mat& image)
   for (auto& pose : poses) {
     for (size_t keypointIdx = 0; keypointIdx < pose.keypoints.size(); keypointIdx++) {
       if (pose.keypoints[keypointIdx] != absentKeypoint) {
-        cv::circle(image, pose.keypoints[keypointIdx], 4, colors[keypointIdx], -1);
+        cv::circle(image, pose.keypoints[keypointIdx], 1, colors[keypointIdx], -1);
       }
     }
   }

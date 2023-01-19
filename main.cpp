@@ -76,6 +76,10 @@ extern "C" void EMSCRIPTEN_KEEPALIVE poseRender(size_t addr, int width, int heig
       pose.keypoints[j].x = keypoints[n];
       pose.keypoints[j].y = keypoints[n + 1];
       pose.scores[j] = keypoints[n + 2];
+      if (pose.scores[j] < 0.2){
+        pose.keypoints[j].x = -1.0f;
+        pose.keypoints[j].y = -1.0f;
+      }
     }
     pose.score = std::accumulate(pose.scores.begin(), pose.scores.end(), 0.0) / pose.scores.size();
     poses.push_back(pose);
